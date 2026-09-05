@@ -17,8 +17,45 @@ def get_gsheet():
     return gc.open_by_key(os.environ["GOOGLE_SHEET_ID"])
 
 
+def _read_watchlist_local() -> list[dict] | None:
+    """本地 CSV 優先：WATCHLIST_CSV > D:\\台股\\watchlist_40.csv > ./watchlist_40.csv > ./watchlist.csv"""
+    import csv
+    from pathlib import Path
+
+    candidates = []
+    env_path = os.environ.get("WATCHLIST_CSV")
+    if env_path:
+        candidates.append(Path(env_path))
+    candidates += [
+        Path(r"D:\台股\watchlist_40.csv"),
+        Path(__file__).resolve().parent.parent / "watchlist_40.csv",
+        Path(__file__).resolve().parent.parent / "watchlist.csv",
+        Path.cwd() / "watchlist_40.csv",
+    ]
+    for p in candidates:
+        if p.exists():
+            try:
+                with p.open("r", encoding="utf-8-sig", newline="") as f:
+                    reader = csv.DictReader(f)
+                    rows = list(reader)
+                    # 標準化欄位
+                    enabled = [
+                        r for r in rows
+                        if str(r.get("enabled", "")).upper() in ("TRUE", "1", "YES")
+                    ]
+                    if enabled:
+                        print(f"[watchlist] 使用本地 {p} ({len(enabled)} 檔)")
+                        return enabled
+            except Exception as e:
+                print(f"[watchlist] 讀本地 {p} 失敗: {e}")
+    return None
+
+
 def read_watchlist() -> list[dict]:
-    """從 Google Sheet Watchlist 分頁讀股票清單"""
+    """從本地 CSV 優先，否則從 Google Sheet Watchlist 分頁讀股票清單"""
+    local = _read_watchlist_local()
+    if local is not None:
+        return local
     sh = get_gsheet()
     ws = sh.worksheet("Watchlist")
     rows = ws.get_all_records()

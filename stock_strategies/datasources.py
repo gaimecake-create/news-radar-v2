@@ -219,11 +219,99 @@ def get_capital_and_industry(stock_id: str, as_of: str | None = None) -> dict:
 _INDEX_FALLBACK = {"TAIEX": ["TAIEX", "TWII"], "TWII": ["TWII", "TAIEX"]}
 
 
+def _fetch_twse_index_history(start: str, as_of: str | None = None) -> pd.DataFrame:
+    """直接從 TWSE 官網抓加權指數日線（免 FINMIND_TOKEN）。
+
+    來源：https://www.twse.com.tw/rwd/zh/afterTrading/FMTQIK?date=YYYYMM01&response=json
+    每個月份一包，欄位含「發行量加權股價指數」收盤值。
+    ROC 日期 114/09/01 -> 西元 2025-09-01。
+    回 DataFrame[date, close]（open/high/low 用 close 補齊給 market.py 用）。
+    失敗回空 DataFrame，不 raise，讓上層 fallback 到 FinMind。
+    """
+    import datetime as _dt
+    import requests
+
+    try:
+        start_dt = pd.to_datetime(start)
+    except Exception:
+        start_dt = pd.to_datetime("2015-01-01")
+    end_dt = pd.to_datetime(as_of) if as_of else pd.Timestamp.now()
+
+    # 收集需要抓的月份首日（每月一 request）
+    months = []
+    cur = _dt.date(start_dt.year, start_dt.month, 1)
+    end_month = _dt.date(end_dt.year, end_dt.month, 1)
+    while cur <= end_month:
+        months.append(cur.strftime("%Y%m01"))
+        # 下個月
+        if cur.month == 12:
+            cur = _dt.date(cur.year + 1, 1, 1)
+        else:
+            cur = _dt.date(cur.year, cur.month + 1, 1)
+
+    rows = []
+    for yyyymm01 in months:
+        try:
+            url = f"https://www.twse.com.tw/rwd/zh/afterTrading/FMTQIK?date={yyyymm01}&response=json"
+            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+            r.raise_for_status()
+            j = r.json()
+            if j.get("stat") != "OK":
+                continue
+            fields = j.get("fields", [])
+            # 找到指數欄位位置
+            try:
+                date_idx = fields.index("日期")
+                close_idx = fields.index("發行量加權股價指數")
+            except ValueError:
+                continue
+            for row in j.get("data", []):
+                roc_date = row[date_idx].strip()  # 114/09/04
+                close_s = row[close_idx].strip().replace(",", "")
+                try:
+                    parts = roc_date.split("/")
+                    y = int(parts[0]) + 1911
+                    m = int(parts[1]); d = int(parts[2])
+                    iso = f"{y:04d}-{m:02d}-{d:02d}"
+                    dt = pd.to_datetime(iso)
+                except Exception:
+                    continue
+                if dt < start_dt or dt > end_dt:
+                    continue
+                try:
+                    close = float(close_s)
+                except Exception:
+                    continue
+                rows.append({"date": dt, "close": close})
+        except Exception:
+            continue
+
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows).sort_values("date").reset_index(drop=True)
+    # market.py 需要 open/high/low/close，TWSE 此表只有 close，用 close 補齊
+    for col in ["open", "high", "low"]:
+        df[col] = df["close"]
+    return df[["date", "open", "high", "low", "close"]]
+
+
 def get_index_history(index_id: str = "TAIEX", start: str | None = None,
                       as_of: str | None = None) -> pd.DataFrame:
     """大盤指數（日）。回 date, open, high, low, close。
-    依序試 TAIEX/TWII（沿用 market.py 慣例）。"""
+    優先走 TWSE 官網（免 token），失敗才 fallback 到 FinMind TAIEX/TWII。"""
     start = start or "2015-01-01"
+    # 1) 優先 TWSE 官網直抓
+    try:
+        df_twse = _fetch_twse_index_history(start, as_of)
+        if not df_twse.empty and len(df_twse) >= 5:
+            # 補齊型別
+            for c in ["open", "high", "low", "close"]:
+                if c in df_twse.columns:
+                    df_twse[c] = pd.to_numeric(df_twse[c], errors="coerce")
+            return df_twse.sort_values("date").reset_index(drop=True)
+    except Exception:
+        pass
+    # 2) Fallback: FinMind
     for did in _INDEX_FALLBACK.get(index_id, [index_id]):
         try:
             df = fetch_finmind_cached("TaiwanStockPrice", did, start, end_date=as_of)
