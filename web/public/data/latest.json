@@ -1,0 +1,25 @@
+{
+  "generated_at": "2026-09-05T00:00:00",
+  "strategy": {
+    "id": "default",
+    "name": "default"
+  },
+  "market": {
+    "bullish": true,
+    "close": 46551.13,
+    "ma20": 44163.35,
+    "note": "🟢 加權 46551 站上 20 日線 (+5.4%)，BUY 訊號照常發出（TWSE 直抓）"
+  },
+  "night": null,
+  "night_note": "🌙 尚未產生夜盤資料，請等每日 14:30 GitHub Actions 產生",
+  "downgraded": 0,
+  "summary": {
+    "total": 40,
+    "buy": 0,
+    "watch": 0,
+    "skip": 0,
+    "error": 0
+  },
+  "results": [],
+  "watchlist": []
+}

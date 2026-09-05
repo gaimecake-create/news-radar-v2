@@ -57,4 +57,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ strategy_id, limit }),
     }),
+  // 靜態模式：讀 Cloudflare Pages 上的 latest.json（免後端）
+  getLatestStatic: async (): Promise<RunResult & { generated_at: string; night_note?: string }> => {
+    const res = await fetch("/data/latest.json", { cache: "no-store" });
+    if (!res.ok) throw new Error("no static data");
+    return res.json();
+  },
 };

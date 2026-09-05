@@ -12,15 +12,24 @@ export default function Dashboard() {
   const [running, setRunning] = useState(false);
   const [run, setRun] = useState<RunResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [staticData, setStaticData] = useState<RunResult & { generated_at?: string; night_note?: string } | null>(null);
+  const [staticError, setStaticError] = useState<string | null>(null);
 
   useEffect(() => {
+    // 1) 優先讀靜態 latest.json（關機也能看，免後端）
+    api.getLatestStatic().then((d: any) => {
+      setStaticData(d);
+      setMarket(d.market);
+      setWatchCount(d.watchlist?.length ?? d.summary?.total ?? null);
+    }).catch((e) => setStaticError(e.message));
+    // 2) 後端若有開，補上策略列表等（失敗不影響靜態展示）
     api.listStrategies().then((d) => {
       setStrategies(d.strategies);
       if (d.strategies.find((s) => s.id === "default")) setPicked("default");
       else if (d.strategies[0]) setPicked(d.strategies[0].id);
-    });
-    api.getMarket().then(setMarket).catch(() => setMarket(null));
-    api.getWatchlist().then((w) => setWatchCount(w.items?.length ?? 0)).catch(() => setWatchCount(null));
+    }).catch(() => {});
+    api.getMarket().then(setMarket).catch(() => {});
+    api.getWatchlist().then((w) => setWatchCount((prev) => prev ?? w.items?.length ?? 0)).catch(() => {});
   }, []);
 
   async function doRun() {
@@ -63,7 +72,7 @@ export default function Dashboard() {
         <div className="card">
           <div className="text-xs text-muted">Watchlist</div>
           <div className="text-2xl font-semibold mt-2">{watchCount ?? "—"} 檔</div>
-          <div className="text-xs text-muted mt-2">來自 Google Sheet</div>
+          <div className="text-xs text-muted mt-2">{staticData ? "本地 40檔 · 關機也看得到" : "來自 Google Sheet"}</div>
         </div>
         <div className="card">
           <div className="text-xs text-muted">可用策略</div>
@@ -96,7 +105,41 @@ export default function Dashboard() {
           </button>
         </div>
         {error && <div className="text-sm text-err mt-3">錯誤：{error}</div>}
+        {staticError && !staticData && <div className="text-xs text-muted mt-3">尚無靜態資料（需等 GitHub Actions 產生 /data/latest.json）</div>}
       </div>
+
+      {staticData && (
+        <div className="card">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-medium">今日最新（靜態 · 關機也能看）</h2>
+            <div className="flex gap-2 text-xs">
+              <span className="badge-buy">BUY {staticData.summary.buy}</span>
+              <span className="badge-watch">WATCH {staticData.summary.watch}</span>
+              <span className="badge-skip">SKIP {staticData.summary.skip}</span>
+              {staticData.summary.error > 0 && <span className="badge-err">ERR {staticData.summary.error}</span>}
+            </div>
+          </div>
+          <div className="text-xs text-muted mb-1">{staticData.market.note}</div>
+          {staticData.night_note && <div className="text-xs text-muted mb-3">🌙 {staticData.night_note}</div>}
+          <div className="text-xs text-muted mb-3">更新：{staticData.generated_at ?? "—"} · 策略 {staticData.strategy?.name ?? staticData.strategy?.id}</div>
+          <div className="space-y-2">
+            {staticData.results.filter((r: any) => r.action !== "ERROR").map((r: any) => (
+              <div key={r.stock_id} className="bg-panel2 border border-line rounded-lg p-3 flex items-center gap-3">
+                <ActionBadge action={r.action} />
+                <div className="font-mono w-16">{r.stock_id}</div>
+                <div className="flex-1 truncate">
+                  <div className="text-sm">{r.name}</div>
+                  <div className="text-xs text-muted">{r.components?.tech_signals?.join(" · ") || "—"}</div>
+                </div>
+                <div className="text-right">
+                  <div className="font-mono">{r.signal_score}</div>
+                  <div className="text-xs text-muted">勝率 {r.components?.backtest_winrate != null ? `${(r.components.backtest_winrate * 100).toFixed(0)}%` : "—"}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {run && (
         <div className="card">
